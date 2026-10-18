@@ -1,0 +1,87 @@
+# Wdrażanie modeli w Microsoft Foundry przez skill + Terraform + Pull Request
+
+## Idea
+
+Modele w Foundry wdrażamy bez klikania i bez ręcznych komend:
+
+1. Mówimy asystentowi AI (GitHub Copilot CLI): "wdróż model X".
+2. Asystent, prowadzony przez **skill** (plik `SKILL.md`), sprawdza dostępność
+   modelu i quota, **dopisuje model do pliku Terraform** i otwiera **Pull Request**.
+3. Pipeline pokazuje `terraform plan`, czyli co dokładnie się zmieni.
+4. Po merge i **akceptacji człowieka** pipeline wykonuje `terraform apply`.
+
+Stan Terraforma trzymamy w Azure Storage (jedno źródło prawdy).
+Asystent AI **nigdy** nie zmienia Azure sam - przygotowuje tylko zmianę do przeglądu.
+
+## Wymagania
+
+- WSL / Linux: `az`, `terraform`, `gh`, `git`, Node.js 22, `copilot` (GitHub Copilot CLI)
+- Logowanie do Azure **z MFA**
+- Rola Owner na subskrypcji
+
+## Krok 1. Folder i repozytorium
+
+```bash
+mkdir -p ~/foundry-skills && cd ~/foundry-skills
+git init -b main
+gh repo create foundry-skills --public
+git remote add origin https://github.com/$(gh api user --jq .login)/foundry-skills.git
+```
+
+Repo tworzymy puste - kod wypychamy dopiero po bootstrapie (krok 4), bo pipeline
+potrzebuje zmiennych, które ustawia bootstrap.
+
+## Krok 2. Bootstrap - pliki
+
+Bootstrap to mały Terraform uruchamiany **raz, lokalnie**, ze stanem lokalnym (nie w Git).
+Przygotowuje wszystko, czego pipeline potrzebuje, żeby potem sam zarządzał infrastrukturą.
+
+| Plik | Co tworzy |
+|---|---|
+| `bootstrap/state.tf` | RG na stan, pustą RG na Foundry, storage account + kontener `tfstate` |
+| `bootstrap/identity.tf` | managed identity dla GitHub Actions |
+| `bootstrap/federation.tf` | OIDC: logowanie bez haseł z PR, z `main` i ze środowiska `production` |
+| `bootstrap/roles.tf` | Contributor na RG Foundry, dostęp do stanu (pipeline i my) |
+| `bootstrap/github.tf` | zmienne GitHub Actions (ID, nazwy RG, storage) |
+| `bootstrap/environment.tf` | środowisko `production` z wymaganą akceptacją, tylko z `main` |
+| `bootstrap/outputs.tf` | lokalne pliki `infra/backend.hcl` i `infra/env.auto.tfvars` |
+
+Ważne decyzje:
+- **Managed identity zamiast app registration** - nie wymaga uprawnień do Entra ID.
+- **Subject OIDC z numerycznymi ID** (`owner@id/repo@id`) - taki format wysyła teraz GitHub.
+- **Storage bez kluczy** (`shared_access_key_enabled = false`) - dostęp tylko przez Entra ID.
+
+## Krok 4. Infrastruktura Foundry (`infra/`)
+
+Terraform zarządzany przez pipeline. Stan w Azure Storage.
+
+| Plik | Zawartość |
+|---|---|
+| `infra/providers.tf` | providery `azurerm` + `azapi`, backend `azurerm` (parametry z zewnątrz) |
+| `infra/variables.tf` | zmienne + walidacja listy modeli (nazwa, capacity 1-100) |
+| `infra/foundry.tf` | zasób Foundry (AI Services) + projekt `models` |
+| `infra/deployments.tf` | `for_each` po liście modeli → jeden deployment na wpis |
+| `infra/models.auto.tfvars` | **LISTA MODELI** - jedyny plik zmieniany przy wdrażaniu modeli |
+
+Lokalny podgląd (bez wdrażania):
+
+```bash
+cd infra
+terraform init -backend-config=backend.hcl
+terraform plan
+```
+
+Zasada: **lokalnie tylko `plan`**. `apply` wykonuje wyłącznie pipeline.
+
+## Krok 5. Pipeline (`.github/workflows/terraform.yml`)
+
+| Job | Kiedy | Co robi |
+|---|---|---|
+| `plan` | PR zmieniający `infra/` | `fmt -check` → `init` → `validate` → `plan`; plan w zakładce **Summary** runu |
+| `apply` | push na `main` | **czeka na akceptację** (`environment: production`), potem `apply -parallelism=1` |
+
+- Logowanie: OIDC (`ARM_USE_OIDC=true`) tożsamością z bootstrapu - brak sekretów w repo.
+- Wartości zmiennych Terraform pochodzą ze zmiennych GitHub Actions (`TF_VAR_*`).
+- `concurrency` - nigdy dwa runy naraz na tym samym stanie.
+- `-parallelism=1` - Foundry nie lubi równoległych zmian deploymentów na jednym zasobie.
+

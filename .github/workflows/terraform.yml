@@ -1,0 +1,88 @@
+name: Foundry models (Terraform)
+
+on:
+  pull_request:
+    paths: ["infra/**"]
+  push:
+    branches: [main]
+    paths: ["infra/**"]
+  workflow_dispatch:
+
+permissions:
+  id-token: write
+  contents: read
+
+concurrency:
+  group: terraform-foundry
+  cancel-in-progress: false
+
+env:
+  ARM_USE_OIDC: "true"
+  ARM_CLIENT_ID: ${{ vars.AZURE_CLIENT_ID }}
+  ARM_TENANT_ID: ${{ vars.AZURE_TENANT_ID }}
+  ARM_SUBSCRIPTION_ID: ${{ vars.AZURE_SUBSCRIPTION_ID }}
+  TF_VAR_subscription_id: ${{ vars.AZURE_SUBSCRIPTION_ID }}
+  TF_VAR_prefix: ${{ vars.PREFIX }}
+  TF_VAR_location: ${{ vars.LOCATION }}
+  TF_VAR_resource_group_name: ${{ vars.FOUNDRY_RG }}
+  TF_IN_AUTOMATION: "true"
+  BACKEND: >-
+    -backend-config=resource_group_name=${{ vars.TFSTATE_RG }}
+    -backend-config=storage_account_name=${{ vars.TFSTATE_ACCOUNT }}
+    -backend-config=container_name=tfstate
+    -backend-config=key=foundry.tfstate
+    -backend-config=use_azuread_auth=true
+    -backend-config=use_oidc=true
+
+defaults:
+  run:
+    working-directory: infra
+
+jobs:
+  plan:
+    if: github.event_name == 'pull_request'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: hashicorp/setup-terraform@v3
+        with:
+          terraform_wrapper: false
+      - name: Format
+        run: terraform fmt -check -recursive
+      - name: Init
+        run: terraform init -input=false $BACKEND
+      - name: Validate
+        run: terraform validate
+      - name: Plan
+        run: terraform plan -input=false -lock=false -no-color -out=tfplan
+      - name: Plan do podsumowania
+        if: always()
+        run: |
+          {
+            echo "## terraform plan"
+            echo '```'
+            terraform show -no-color tfplan 2>/dev/null | tail -c 60000 || echo "(brak planu)"
+            echo '```'
+          } >> "$GITHUB_STEP_SUMMARY"
+
+  apply:
+    if: github.ref == 'refs/heads/main' && github.event_name != 'pull_request'
+    runs-on: ubuntu-latest
+    environment: production
+    steps:
+      - uses: actions/checkout@v4
+      - uses: hashicorp/setup-terraform@v3
+        with:
+          terraform_wrapper: false
+      - name: Init
+        run: terraform init -input=false $BACKEND
+      - name: Apply
+        run: terraform apply -input=false -auto-approve -parallelism=1 -no-color
+      - name: Wynik do podsumowania
+        run: |
+          {
+            echo "## Wdrożone modele"
+            echo '```'
+            terraform output -no-color deployments
+            echo '```'
+          } >> "$GITHUB_STEP_SUMMARY"
