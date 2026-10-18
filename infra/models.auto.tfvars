@@ -15,6 +15,6 @@ deployments = {
   "gpt-54-nano" = {
     model_name    = "gpt-5.4-nano"
     model_version = "2026-03-17"
-    capacity      = 10
+    capacity      = 20
   }
 }
