@@ -107,3 +107,30 @@ fmt + validate -> PR z opisem sprawdzeń.
 Uwaga: w plikach tworzonych przez heredoc w czacie bloki kodu wewnątrz Markdown
 zapisujemy jako ~~~ zamiast trzech odwrotnych apostrofów - inaczej kopiowanie się urywa.
 
+## Krok 10. Cykl życia modelu
+
+Każda operacja = to samo polecenie do Copilota + PR + akceptacja:
+
+| Polecenie | Zmiana w models.auto.tfvars | terraform plan |
+|---|---|---|
+| "Wdróż gpt-5.4-nano w wersji 2026-03-17 z pojemnością 10" | nowy wpis | 1 to add |
+| "Zwiększ pojemność gpt-54-nano do 20" | capacity 10 -> 20 | 1 to change |
+| "Usuń deployment gpt-54-nano" | wpis usunięty | 1 to destroy |
+
+## Podsumowanie
+
+| Kto | Rola |
+|---|---|
+| Skill (SKILL.md) | wiedza: jak sprawdzić model, wersję, quota; czego nie wolno robić |
+| Copilot | wykonawca: sprawdza, edytuje jeden plik, otwiera PR |
+| Pipeline | plan w PR, apply po akceptacji |
+| Człowiek | review PR i akceptacja wdrożenia |
+| Terraform + stan w Azure | jedno źródło prawdy o tym, co jest wdrożone |
+
+## Sprzątanie
+
+~~~bash
+cd infra && terraform init -backend-config=backend.hcl && terraform destroy
+cd ../bootstrap && export GITHUB_TOKEN=$(gh auth token) && terraform destroy
+~~~
+
