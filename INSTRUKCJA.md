@@ -85,3 +85,25 @@ Zasada: **lokalnie tylko `plan`**. `apply` wykonuje wyłącznie pipeline.
 - `concurrency` - nigdy dwa runy naraz na tym samym stanie.
 - `-parallelism=1` - Foundry nie lubi równoległych zmian deploymentów na jednym zasobie.
 
+## Krok 7. Skill dla Copilota
+
+Plik: .github/skills/foundry-model-gitops/SKILL.md
+
+Skill = przepis dla asystenta AI. Plik Markdown z nagłówkiem YAML (name, description).
+Copilot CLI czyta skille projektu z .github/skills/, a osobiste z ~/.copilot/skills/.
+
+Co narzuca nasz skill:
+
+| Wolno | Nie wolno |
+|---|---|
+| komendy odczytu: az ... list/show | az ... create/update/delete |
+| terraform fmt, init -backend=false, validate | terraform apply/destroy |
+| zmiana infra/models.auto.tfvars | zmiana *.tf, workflowów, bootstrapu |
+| gałąź, commit, push, gh pr create | merge PR |
+
+Procedura skilla: sprawdź model w regionie -> sprawdź quota -> zmień listę modeli ->
+fmt + validate -> PR z opisem sprawdzeń.
+
+Uwaga: w plikach tworzonych przez heredoc w czacie bloki kodu wewnątrz Markdown
+zapisujemy jako ~~~ zamiast trzech odwrotnych apostrofów - inaczej kopiowanie się urywa.
+
